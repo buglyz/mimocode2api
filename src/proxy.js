@@ -720,7 +720,7 @@ export function createApp(config) {
                         };
                         ensureKeepalive();
 
-                        const sendDelta = (delta, isReasoning = false) => {
+                        let sendDelta = (delta, isReasoning = false) => {
                             if (!delta) return;
                             if (isReasoning) rawStreamedReasoning += delta;
                             else rawStreamedContent += delta;
@@ -811,12 +811,33 @@ export function createApp(config) {
 
                             // 3. Send prompt after SSE is connected
                             // Wait a tick to let SSE connection establish
-                            await new Promise(r => setTimeout(r, 100));
+                            await new Promise(r => setTimeout(r, 50));
                             client.session.prompt(promptParams).catch(err => logDebug(config, 'Prompt error:', err.message));
 
-                            // 4. Wait for SSE to complete or timeout
+                            // 4. Wait for SSE to complete, with idle timeout
+                            // If SSE receives data but goes silent for 15s, assume completion
+                            let idleTimer = null;
+                            const resetIdle = () => {
+                                if (idleTimer) clearTimeout(idleTimer);
+                                idleTimer = setTimeout(() => {
+                                    if (!sseFinished) {
+                                        logDebug(config, 'SSE idle timeout', { sessionId, deltaChars: sseContent.length + sseReasoning.length });
+                                        sseController.abort();
+                                    }
+                                }, 15000);
+                            };
+                            resetIdle();
+
+                            // Patch sendDelta to reset idle timer
+                            const originalSendDelta = sendDelta;
+                            sendDelta = function(delta, isReasoning) {
+                                resetIdle();
+                                return originalSendDelta(delta, isReasoning);
+                            };
+
                             const sseTimeout = new Promise(resolve => setTimeout(() => resolve('timeout'), config.REQUEST_TIMEOUT_MS));
                             const sseResult = await Promise.race([ssePromise.then(() => 'done'), sseTimeout]);
+                            if (idleTimer) clearTimeout(idleTimer);
 
                             if (sseFinished || (sseReceivedDelta && sseResult === 'done')) {
                                 collected = { content: sseContent, reasoning: sseReasoning };
