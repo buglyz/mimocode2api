@@ -1,0 +1,29 @@
+{
+  "name": "mimocode2api",
+  "version": "1.0.0",
+  "description": "An OpenAI-compatible API gateway for the MiMoCode CLI, enabling the use of free mimo-auto model in standard AI clients.",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "keywords": [
+    "mimocode",
+    "mimo",
+    "openai",
+    "proxy",
+    "api",
+    "free",
+    "mimo-auto"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.17.11",
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
