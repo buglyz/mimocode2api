@@ -732,21 +732,15 @@ export function createApp(config) {
                             if (!filtered) return;
 
                             if (isReasoning) {
-                                if (!insideReasoning) {
-                                    res.write(sseChunk(id, modelStr, { content: '<think>\n' }));
-                                    insideReasoning = true;
-                                }
+                                // Don't send reasoning as content delta — Hermes treats  exposes blocks
+                                // as thinking-only responses. Just accumulate for tool call parsing.
                                 streamedReasoning += filtered;
                                 reasoningTokens += Math.ceil(filtered.length / 4);
                             } else {
-                                if (insideReasoning) {
-                                    res.write(sseChunk(id, modelStr, { content: '\n</think>\n\n' }));
-                                    insideReasoning = false;
-                                }
                                 streamedContent += filtered;
                                 completionTokens += Math.ceil(filtered.length / 4);
+                                res.write(sseChunk(id, modelStr, { content: filtered }));
                             }
-                            res.write(sseChunk(id, modelStr, { content: filtered }));
                         };
 
                         // SSE-first approach: subscribe to event stream BEFORE sending prompt
@@ -859,6 +853,18 @@ export function createApp(config) {
                             sendDelta(`[Proxy Error] ${collected.error.name || 'MiMoError'}: ${collected.error.data?.message || collected.error.message || 'Unknown error'}`);
                         }
 
+                        // If model only produced reasoning (no content), emit raw content/reasoning as content
+                        // so the client gets a visible response.
+                        if (!streamedContent && collected?.content) {
+                            res.write(sseChunk(id, modelStr, { content: collected.content }));
+                            streamedContent = collected.content;
+                        }
+                        if (!streamedContent && !streamedReasoning && collected?.reasoning) {
+                            // Last resort: use reasoning as content
+                            res.write(sseChunk(id, modelStr, { content: collected.reasoning }));
+                            streamedContent = collected.reasoning;
+                        }
+
                         if (insideReasoning) {
                             res.write(sseChunk(id, modelStr, { content: '\n</think>\n\n' }));
                         }
@@ -922,7 +928,9 @@ export function createApp(config) {
                         // Reasoning is sent via stream deltas (with thinking tags) in streaming mode.
                         // Non-streaming returns clean content so title generation and other consumers
                         // don't pick up reasoning text.
-                        const finalContent = safeContent || '';
+                        // If content is empty but reasoning exists, use reasoning as content
+                        // so the client always gets a visible response.
+                        const finalContent = safeContent || (safeReasoning ? safeReasoning : '');
 
                         const publicToolCalls = toPublicToolCalls(validatedToolCalls);
                         const assistantMessage = publicToolCalls.length > 0
