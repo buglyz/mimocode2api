@@ -20,7 +20,7 @@ import {
 } from './tool-runtime/parser.js';
 
 // ─── Constants ───
-const DEFAULT_POLL_INTERVAL_MS = 500;
+const DEFAULT_POLL_INTERVAL_MS = 200;
 const DEFAULT_EVENT_FIRST_DELTA_TIMEOUT_MS = 4000;
 const DEFAULT_EVENT_IDLE_TIMEOUT_MS = 8000;
 const STARTUP_WAIT_ITERATIONS = 60;
@@ -749,48 +749,27 @@ export function createApp(config) {
                             res.write(sseChunk(id, modelStr, { content: filtered }));
                         };
 
+                        // Send prompt first, then poll for complete response.
+                        // SSE events are unreliable with mimo serve — polling is faster and simpler.
                         let collected = null;
                         try {
-                            const collectPromise = collectFromEvents(
-                                client, config, sessionId, config.REQUEST_TIMEOUT_MS,
-                                sendDelta, DEFAULT_EVENT_FIRST_DELTA_TIMEOUT_MS, DEFAULT_EVENT_IDLE_TIMEOUT_MS
-                            );
-                            const safeCollect = collectPromise.catch((err) => ({ __error: err }));
                             client.session.prompt(promptParams).catch(err => logDebug(config, 'Prompt error:', err.message));
-                            collected = await safeCollect;
+                            // Poll with streaming-like behavior: check for partial results
+                            const { content, reasoning, error } = await pollForAssistantResponse(client, config, sessionId, config.REQUEST_TIMEOUT_MS);
+                            collected = { content, reasoning, error };
                         } catch (e) {
                             logDebug(config, 'Stream error:', e.message);
+                            collected = { __error: e };
                         }
 
-                        // Fallback to polling
-                        const handleFallback = async (reason) => {
-                            logDebug(config, reason, { sessionId });
-                            const { content, reasoning, error } = await pollForAssistantResponse(client, config, sessionId, config.REQUEST_TIMEOUT_MS);
-                            if (error && !content && !reasoning) {
-                                sendDelta(`[Proxy Error] ${error.name || 'MiMoError'}: ${error.data?.message || error.message || 'Unknown error'}`);
-                            } else {
-                                if (reasoning) {
-                                    const rem = reasoning.startsWith(rawStreamedReasoning) ? reasoning.slice(rawStreamedReasoning.length) : reasoning;
-                                    if (rem) sendDelta(rem, true);
-                                }
-                                if (content) {
-                                    const rem = content.startsWith(rawStreamedContent) ? content.slice(rawStreamedContent.length) : content;
-                                    if (rem) sendDelta(rem, false);
-                                }
-                            }
-                        };
-
-                        if (collected?.__error) await handleFallback('SSE collect error, falling back to polling');
-                        else if (collected?.noData) await handleFallback('Fallback to polling (stream)');
-                        else if (collected?.idleTimeout) await handleFallback('SSE idle timeout, polling for completion');
-
-                        if (collected && !streamedContent && !streamedReasoning && (collected.reasoning || collected.content)) {
-                            if (collected.reasoning) sendDelta(collected.reasoning, true);
-                            if (collected.content) sendDelta(collected.content, false);
-                        }
-
-                        if (!streamedContent && !streamedReasoning) {
-                            await handleFallback('SSE returned empty, falling back to polling');
+                        // Send collected content as deltas
+                        if (collected?.__error) {
+                            sendDelta(`[Proxy Error] ${collected.__error.message || 'Unknown error'}`);
+                        } else if (collected?.error && !collected.content && !collected.reasoning) {
+                            sendDelta(`[Proxy Error] ${collected.error.name || 'MiMoError'}: ${collected.error.data?.message || collected.error.message || 'Unknown error'}`);
+                        } else {
+                            if (collected?.reasoning) sendDelta(collected.reasoning, true);
+                            if (collected?.content) sendDelta(collected.content, false);
                         }
 
                         if (insideReasoning) {
@@ -852,10 +831,11 @@ export function createApp(config) {
                         const reasoningTokensCalc = Math.ceil((safeReasoning || '').length / 4);
                         const totalTokens = promptTokens + completionTokensCalc + reasoningTokensCalc;
 
-                        let finalContent = safeContent;
-                        if (safeReasoning) {
-                            finalContent = ['<think>', safeReasoning, '</think>', '', '', safeContent].join('\n');
-                        }
+                        // Don't mix reasoning into content — return pure content only.
+                        // Reasoning is sent via stream deltas (with thinking tags) in streaming mode.
+                        // Non-streaming returns clean content so title generation and other consumers
+                        // don't pick up reasoning text.
+                        const finalContent = safeContent || '';
 
                         const publicToolCalls = toPublicToolCalls(validatedToolCalls);
                         const assistantMessage = publicToolCalls.length > 0
