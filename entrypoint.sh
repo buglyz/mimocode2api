@@ -2,7 +2,7 @@
 
 PUID=${PUID:-1000}
 PGID=${PGID:-1000}
-MIMOCODE_SERVER_PASSWORD=${MIMO...nssl rand -hex 16)}
+export MIMOCODE_SERVER_PASSWORD="${MIMOCODE_SERVER_PASSWORD:-}"
 
 if [ "$(id -g node)" -ne "$PGID" ]; then
     groupmod -o -g "$PGID" node
@@ -29,7 +29,17 @@ if [[ "$1" == "mimo" && "$2" == "serve" ]]; then
     echo "Waiting for MiMo Server to become available..."
     MAX_RETRIES=30
     COUNT=0
-    while ! curl -s http://127.0.0.1:${SERVER_PORT}/health > /dev/null; do
+    HEALTH_URL="http://127.0.0.1:${SERVER_PORT}/health"
+    CURL_ARGS=(-s -o /dev/null -w "%{http_code}")
+    if [ -n "$MIMOCODE_SERVER_PASSWORD" ]; then
+        CURL_ARGS+=(-u "mimocode:${MIMOCODE_SERVER_PASSWORD}")
+    fi
+    while true; do
+        HEALTH_STATUS=$(curl "${CURL_ARGS[@]}" "$HEALTH_URL" || true)
+        if [[ "$HEALTH_STATUS" == "200" || "$HEALTH_STATUS" == "503" ]]; then
+            break
+        fi
+
         if [ $COUNT -ge $MAX_RETRIES ]; then
             echo "Timeout waiting for MiMo Server."
             kill $SERVER_PID 2>/dev/null

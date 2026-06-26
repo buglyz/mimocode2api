@@ -10,8 +10,9 @@ services:
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
-      - MIMOCODE_SERVER_PASSWORD=${MIMO...s}
-      - API_KEY=***      - BIND_HOST=0.0.0.0
+      - MIMOCODE_SERVER_PASSWORD=${MIMOCODE_SERVER_PASSWORD:-}
+      - API_KEY=${API_KEY:-}
+      - BIND_HOST=0.0.0.0
       - DISABLE_TOOLS=${DISABLE_TOOLS:-true}
       - MIMOCODE_MIMO_ONLY=true
       - MIMOCODE_PROXY_DEBUG=${MIMOCODE_PROXY_DEBUG:-false}
