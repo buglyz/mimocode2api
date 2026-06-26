@@ -1,9 +1,6 @@
 services:
   mimocode2api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: mimocode2api:latest
+    image: ghcr.io/buglyz/mimocode2api:latest
     container_name: mimocode2api
     ports:
       - "${MIMOCODE_PROXY_PORT:-10000}:${MIMOCODE_PROXY_PORT:-10000}"
