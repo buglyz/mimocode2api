@@ -815,18 +815,21 @@ export function createApp(config) {
                             client.session.prompt(promptParams).catch(err => logDebug(config, 'Prompt error:', err.message));
 
                             // 4. Wait for SSE to complete, with idle timeout
-                            // If SSE receives data but goes silent for 15s, assume completion
+                            // Only apply idle timeout after first delta received
                             let idleTimer = null;
                             const resetIdle = () => {
                                 if (idleTimer) clearTimeout(idleTimer);
-                                idleTimer = setTimeout(() => {
-                                    if (!sseFinished) {
-                                        logDebug(config, 'SSE idle timeout', { sessionId, deltaChars: sseContent.length + sseReasoning.length });
-                                        sseController.abort();
-                                    }
-                                }, 15000);
+                                if (sseReceivedDelta) {
+                                    // After data starts flowing, 10s silence = done
+                                    idleTimer = setTimeout(() => {
+                                        if (!sseFinished) {
+                                            logDebug(config, 'SSE idle timeout', { sessionId, deltaChars: sseContent.length + sseReasoning.length });
+                                            sseFinished = true;
+                                            sseController.abort();
+                                        }
+                                    }, 10000);
+                                }
                             };
-                            resetIdle();
 
                             // Patch sendDelta to reset idle timer
                             const originalSendDelta = sendDelta;
@@ -918,6 +921,7 @@ export function createApp(config) {
                         res.end();
                     } else {
                         // ─── Non-Streaming Response ───
+                        // Use polling for non-streaming (SSE may conflict with shared client)
                         const promptStart = Date.now();
                         const timeoutPromise = new Promise((_, reject) => {
                             setTimeout(() => reject(new Error(`Request timeout after ${config.REQUEST_TIMEOUT_MS}ms`)), config.REQUEST_TIMEOUT_MS);
